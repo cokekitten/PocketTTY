@@ -89,6 +89,92 @@ function setupSoftKeyboardInput(term: Term): void {
 }
 
 /**
+ Scroll the terminal by whole lines with the semantics native emulators
+ use: wheel reports for mouse-tracking apps (tmux, herdr), arrow keys in
+ the alternate buffer (vim, less), scrollback otherwise.
+ @param term - the terminal to scroll
+ @param screen - the .xterm-screen element (wheel dispatch target)
+ @param lines - line count, positive scrolls towards newer content
+ @param clientX - pointer x for the wheel report cell position
+ @param clientY - pointer y for the wheel report cell position
+ */
+function scrollTermLines(
+  term: Term,
+  screen: HTMLElement,
+  lines: number,
+  clientX: number,
+  clientY: number,
+): void {
+  if (term.modes.mouseTrackingMode !== 'none') {
+    // The app owns the mouse: hand xterm wheel events so it encodes proper
+    // wheel reports (position included, for panes), one per line. Note
+    // apps may scroll several lines per report (tmux defaults to 5).
+    for (let i = 0; i < Math.abs(lines); i += 1) {
+      screen.dispatchEvent(
+        new WheelEvent('wheel', {
+          // One line per event in DOM_DELTA_LINE mode: xterm damps and
+          // quantizes small DOM_DELTA_PIXEL deltas (trackpad smoothing),
+          // which would swallow most of the gesture.
+          deltaY: Math.sign(lines),
+          deltaMode: WheelEvent.DOM_DELTA_LINE,
+          clientX,
+          clientY,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    }
+  } else if (term.buffer.active.type === 'alternate') {
+    // No scrollback in the alternate buffer — send arrow keys instead,
+    // like native terminal emulators do.
+    const app = term.modes.applicationCursorKeysMode;
+    let seq: string;
+    if (lines > 0) {
+      seq = app ? '\x1bOB' : '\x1b[B';
+    } else {
+      seq = app ? '\x1bOA' : '\x1b[A';
+    }
+    term.input(seq.repeat(Math.abs(lines)), true);
+  } else {
+    term.scrollLines(lines);
+  }
+}
+
+/**
+ Trackpads emit streams of small DOM_DELTA_PIXEL wheel events, and xterm
+ damps deltas under 50px to 30% ("trackpad smoothing"). Combined with
+ one-line-per-report apps (herdr) that makes two-finger scrolling crawl.
+ Intercept pixel wheels for the mouse-tracking and alternate-buffer cases
+ and emit whole lines ourselves; the normal buffer keeps xterm's native
+ smooth scrolling.
+ @param term - the wetty terminal
+ @param screen - the .xterm-screen element to intercept wheels on
+ */
+function setupTrackpadWheel(term: Term, screen: HTMLElement): void {
+  let remainder = 0;
+  screen.addEventListener(
+    'wheel',
+    (e: WheelEvent) => {
+      // LINE/PAGE deltas (wheel mice on some platforms, our own synthetic
+      // events) already scroll acceptably through xterm.
+      if (e.deltaMode !== WheelEvent.DOM_DELTA_PIXEL) return;
+      const mouseApp = term.modes.mouseTrackingMode !== 'none';
+      if (!mouseApp && term.buffer.active.type !== 'alternate') return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      const cellHeight = screen.clientHeight / term.rows;
+      const delta = e.deltaY + remainder;
+      const lines = Math.trunc(delta / cellHeight);
+      remainder = delta - lines * cellHeight;
+      if (lines !== 0) {
+        scrollTermLines(term, screen, lines, e.clientX, e.clientY);
+      }
+    },
+    { capture: true, passive: false },
+  );
+}
+
+/**
  xterm.js has no built-in touch support: on phones a swipe pans nothing and
  taps don't reliably summon the soft keyboard. Translate touch gestures
  ourselves, mirroring what desktop terminals do with the mouse wheel:
@@ -106,6 +192,7 @@ export function setupTouch(term: Term): void {
   if (!(screen instanceof HTMLElement)) return;
 
   setupSoftKeyboardInput(term);
+  setupTrackpadWheel(term, screen);
   const debug = debugLog;
 
   const { textarea } = term;
@@ -179,10 +266,45 @@ export function setupTouch(term: Term): void {
   let lastY = 0;
   let scrolling = false;
   let lastTapAt = 0;
+  // Flick state: velocity in px/ms (positive = finger moving up), sampled
+  // as an exponential moving average over the drag.
+  let velocity = 0;
+  let rawLastY = 0;
+  let lastMoveAt = 0;
+  let momentumFrame = 0;
+
+  const cancelMomentum = (): void => {
+    if (momentumFrame !== 0) {
+      cancelAnimationFrame(momentumFrame);
+      momentumFrame = 0;
+    }
+  };
+
+  // Keep gliding after a flick, decaying exponentially like native apps.
+  const startMomentum = (clientX: number, clientY: number): void => {
+    let v = velocity;
+    let acc = 0;
+    let lastFrameAt = performance.now();
+    const step = (now: number): void => {
+      const dt = now - lastFrameAt;
+      lastFrameAt = now;
+      v *= Math.exp(-0.002 * dt);
+      acc += v * dt;
+      const cellHeight = screen.clientHeight / term.rows;
+      const lines = Math.trunc(acc / cellHeight);
+      if (lines !== 0) {
+        acc -= lines * cellHeight;
+        scrollTermLines(term, screen, lines, clientX, clientY);
+      }
+      momentumFrame = Math.abs(v) > 0.05 ? requestAnimationFrame(step) : 0;
+    };
+    momentumFrame = requestAnimationFrame(step);
+  };
 
   screen.addEventListener(
     'touchstart',
     (e: TouchEvent) => {
+      cancelMomentum();
       if (e.touches.length !== 1) {
         touchId = undefined;
         return;
@@ -191,7 +313,10 @@ export function setupTouch(term: Term): void {
       touchId = touch.identifier;
       startY = touch.clientY;
       lastY = touch.clientY;
+      rawLastY = touch.clientY;
       startTime = Date.now();
+      lastMoveAt = performance.now();
+      velocity = 0;
       scrolling = false;
     },
     { passive: true },
@@ -210,43 +335,17 @@ export function setupTouch(term: Term): void {
       // Keep the browser from panning/refreshing the page while we scroll
       // the terminal (requires the listener to be non-passive).
       e.preventDefault();
+      const now = performance.now();
+      const dt = now - lastMoveAt;
+      if (dt > 0) {
+        velocity = 0.8 * ((rawLastY - touch.clientY) / dt) + 0.2 * velocity;
+        lastMoveAt = now;
+      }
+      rawLastY = touch.clientY;
       const lines = Math.trunc((lastY - touch.clientY) / cellHeight);
       if (lines === 0) return;
       lastY -= lines * cellHeight;
-      if (term.modes.mouseTrackingMode !== 'none') {
-        // The app owns the mouse: hand xterm wheel events so it encodes
-        // proper wheel reports (position included, for panes), one per cell
-        // of finger travel. Note apps may scroll several lines per report
-        // (tmux defaults to 5; herdr does 1).
-        for (let i = 0; i < Math.abs(lines); i += 1) {
-          screen.dispatchEvent(
-            new WheelEvent('wheel', {
-              // One line per event in DOM_DELTA_LINE mode: xterm damps and
-              // quantizes small DOM_DELTA_PIXEL deltas (trackpad smoothing),
-              // which would swallow most of the gesture.
-              deltaY: Math.sign(lines),
-              deltaMode: WheelEvent.DOM_DELTA_LINE,
-              clientX: touch.clientX,
-              clientY: touch.clientY,
-              bubbles: true,
-              cancelable: true,
-            }),
-          );
-        }
-      } else if (term.buffer.active.type === 'alternate') {
-        // No scrollback in the alternate buffer — send arrow keys instead,
-        // like native terminal emulators do.
-        const app = term.modes.applicationCursorKeysMode;
-        let seq: string;
-        if (lines > 0) {
-          seq = app ? '\x1bOB' : '\x1b[B';
-        } else {
-          seq = app ? '\x1bOA' : '\x1b[A';
-        }
-        term.input(seq.repeat(Math.abs(lines)), true);
-      } else {
-        term.scrollLines(lines);
-      }
+      scrollTermLines(term, screen, lines, touch.clientX, touch.clientY);
     },
     { passive: false },
   );
@@ -264,6 +363,10 @@ export function setupTouch(term: Term): void {
         if (scrolling) reason = 'scroll';
         else if (touch === undefined) reason = 'id';
         debug(`tap-reject ${reason}`);
+        // A flick released with speed keeps gliding.
+        if (scrolling && touch !== undefined && Math.abs(velocity) > 0.25) {
+          startMomentum(touch.clientX, touch.clientY);
+        }
         return;
       }
       debug(
