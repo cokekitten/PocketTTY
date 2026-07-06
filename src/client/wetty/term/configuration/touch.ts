@@ -359,6 +359,45 @@ export function setupTouch(term: Term): void {
       longPressTimer = 0;
     }
   };
+
+  // Two-finger long-press = right-click for mouse-aware apps (herdr menus
+  // and the like); the browser context menu is suppressed anyway.
+  let twoFingerTimer = 0;
+  let twoFingerMid: { x: number; y: number } | undefined;
+
+  const cancelTwoFinger = (): void => {
+    if (twoFingerTimer !== 0) {
+      clearTimeout(twoFingerTimer);
+      twoFingerTimer = 0;
+    }
+  };
+
+  const beginTwoFinger = (a: Touch, b: Touch): void => {
+    twoFingerMid = {
+      x: (a.clientX + b.clientX) / 2,
+      y: (a.clientY + b.clientY) / 2,
+    };
+    twoFingerTimer = window.setTimeout(() => {
+      twoFingerTimer = 0;
+      if (term.modes.mouseTrackingMode === 'none' || !twoFingerMid) return;
+      debug('two-finger long-press: right-click');
+      for (const [type, buttons] of [
+        ['mousedown', 2],
+        ['mouseup', 0],
+      ] as const) {
+        screen.dispatchEvent(
+          new MouseEvent(type, {
+            button: 2,
+            buttons,
+            clientX: twoFingerMid.x,
+            clientY: twoFingerMid.y,
+            bubbles: true,
+            cancelable: true,
+          }),
+        );
+      }
+    }, 500);
+  };
   // Flick state: velocity in px/ms (positive = finger moving up), sampled
   // as an exponential moving average over the drag.
   let velocity = 0;
@@ -399,10 +438,14 @@ export function setupTouch(term: Term): void {
     (e: TouchEvent) => {
       cancelMomentum();
       cancelLongPress();
+      cancelTwoFinger();
       selecting = false;
       if (term.hasSelection()) term.clearSelection();
       if (e.touches.length !== 1) {
         touchId = undefined;
+        if (e.touches.length === 2) {
+          beginTwoFinger(e.touches[0], e.touches[1]);
+        }
         return;
       }
       const touch = e.touches[0];
@@ -427,6 +470,16 @@ export function setupTouch(term: Term): void {
   screen.addEventListener(
     'touchmove',
     (e: TouchEvent) => {
+      if (twoFingerTimer !== 0 && twoFingerMid && e.touches.length === 2) {
+        // Holding still keeps the pending right-click; drifting fingers
+        // mean a pinch or two-finger scroll, so call it off.
+        const midX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+        const midY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+        if (Math.hypot(midX - twoFingerMid.x, midY - twoFingerMid.y) > 15) {
+          cancelTwoFinger();
+        }
+        return;
+      }
       const touch = Array.from(e.touches).find((t) => t.identifier === touchId);
       if (touch === undefined) return;
       lastTouchX = touch.clientX;
@@ -465,12 +518,15 @@ export function setupTouch(term: Term): void {
   screen.addEventListener(
     'touchend',
     (e: TouchEvent) => {
+      // Any finger lifting below two ends a pending two-finger right-click.
+      if (e.touches.length < 2) cancelTwoFinger();
       if (touchId === undefined || e.touches.length > 0) return;
       const touch = Array.from(e.changedTouches).find(
         (t) => t.identifier === touchId,
       );
       touchId = undefined;
       cancelLongPress();
+      cancelTwoFinger();
       if (selecting) {
         // Release ends selection mode: the selected text goes straight to
         // the clipboard (we are inside a user gesture here, so the
