@@ -1,6 +1,7 @@
 import { editor } from '../disconnect/elements';
 import { copySelected, copyShortcut } from './configuration/clipboard';
 import { onInput } from './configuration/editor';
+import { setupTouch } from './configuration/touch';
 import { loadOptions } from './load';
 import type { Options } from './options';
 import type { Term } from '../term';
@@ -11,6 +12,11 @@ export function configureTerm(term: Term): void {
     term.options = options.xterm;
   } catch {
     /* Do nothing */
+  }
+  if (options.xterm.macOptionClickForcesSelection === undefined) {
+    // Saved options from before this default existed miss the flag; without
+    // it, macOS users cannot select (and thus copy) inside mouse-aware apps.
+    term.options.macOptionClickForcesSelection = true;
   }
 
   const toggle = document.querySelector('#options .toggler');
@@ -68,7 +74,8 @@ export function configureTerm(term: Term): void {
     e.preventDefault();
   });
 
-  term.attachCustomKeyEventHandler(copyShortcut);
+  term.attachCustomKeyEventHandler((e) => copyShortcut(term, e));
+  setupTouch(term);
 
   document.addEventListener(
     'mouseup',

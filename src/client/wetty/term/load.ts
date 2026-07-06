@@ -1,7 +1,9 @@
 import type { Options } from './options';
 
 export const defaultOptions: Options = {
-  xterm: { fontSize: 14 },
+  // macOptionClickForcesSelection: on macOS, ⌥-drag is the only way to make
+  // a local selection (and copy) while an app owns the mouse (tmux, herdr…).
+  xterm: { fontSize: 14, macOptionClickForcesSelection: true },
   wettyVoid: 0,
   wettyFitTerminal: true,
 };
