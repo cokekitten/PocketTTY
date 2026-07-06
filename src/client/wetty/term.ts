@@ -1,3 +1,4 @@
+import { ClipboardAddon } from '@xterm/addon-clipboard';
 import { FitAddon } from '@xterm/addon-fit';
 import { ImageAddon } from '@xterm/addon-image';
 import { WebLinksAddon } from '@xterm/addon-web-links';
@@ -6,6 +7,13 @@ import { Terminal } from '@xterm/xterm';
 
 import { terminal as termElement } from './disconnect/elements';
 import { configureTerm } from './term/configuration';
+import {
+  copySelected,
+  deferCopy,
+  hasClipboardApi,
+} from './term/configuration/clipboard';
+import { debugLog } from './term/configuration/debug';
+import { summonKeyboard } from './term/configuration/touch';
 import { loadOptions } from './term/load';
 import type { Options } from './term/options';
 import type { Socket } from 'socket.io-client';
@@ -27,6 +35,26 @@ export class Term extends Terminal {
     this.loadAddon(this.fitAddon);
     this.loadAddon(new WebLinksAddon());
     this.loadAddon(new ImageAddon());
+    this.loadAddon(
+      new ClipboardAddon(undefined, {
+        // OSC 52 writes (how tmux/herdr copy their internal selections)
+        // land in the system clipboard via the same insecure-context-safe
+        // path as select-to-copy. Reads are refused so terminal programs
+        // cannot snoop the clipboard.
+        readText: () => '',
+        writeText: (_selection, text) => {
+          debugLog(`osc52 len=${String(text.length)}`);
+          // An empty payload means the addon rejected the base64 — don't
+          // clobber the clipboard with nothing.
+          if (text === '') return;
+          copySelected(text);
+          // This write runs outside any user gesture; macOS Chrome claims
+          // success but silently drops it on insecure origins. Park the
+          // text so the next click/keystroke rewrites it inside a gesture.
+          if (!hasClipboardApi()) deferCopy(text);
+        },
+      }),
+    );
     this.loadOptions = loadOptions;
     if (!isMobile) {
       try {
@@ -211,6 +239,9 @@ const toggleFunctions = (): void => {
   } else {
     element?.classList.add('active');
     document.getElementById('options')?.classList.remove('opened');
+    // On phones this button is a way to summon the soft keyboard (taps
+    // never do — the textarea sits at inputmode="none" until summoned).
+    if (window.wetty_term) summonKeyboard(window.wetty_term);
   }
 };
 
