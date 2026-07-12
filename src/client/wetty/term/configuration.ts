@@ -2,6 +2,7 @@ import { editor } from '../disconnect/elements';
 import { copySelected, copyShortcut } from './configuration/clipboard';
 import { onInput } from './configuration/editor';
 import { setupTouch } from './configuration/touch';
+import { setupMobileViewport } from './configuration/viewport';
 import { loadOptions } from './load';
 import type { Options } from './options';
 import type { Term } from '../term';
@@ -76,6 +77,7 @@ export function configureTerm(term: Term): void {
 
   term.attachCustomKeyEventHandler((e) => copyShortcut(term, e));
   setupTouch(term);
+  setupMobileViewport(term);
 
   document.addEventListener(
     'mouseup',

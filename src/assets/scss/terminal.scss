@@ -24,3 +24,20 @@
   // Focus happens via JS only, which pointer-events does not affect.
   pointer-events: none;
 }
+
+@media (pointer: coarse) {
+  // Mobile keyboard avoidance: when visualViewport shrinks, keep the terminal
+  // fitted to the visible area with extra clearance above the keyboard.
+  html[data-wetty-mobile-keyboard='1'],
+  html[data-wetty-mobile-keyboard='1'] body,
+  html[data-wetty-mobile-keyboard='1'] #terminal {
+    height: var(--wetty-mobile-viewport-height) !important;
+    max-height: var(--wetty-mobile-viewport-height) !important;
+    overflow: hidden;
+  }
+
+  html[data-wetty-mobile-keyboard='1'] #terminal > .xterm {
+    height: 100% !important;
+    max-height: 100% !important;
+  }
+}
