@@ -6,6 +6,7 @@ export const defaultOptions: Options = {
   xterm: { fontSize: 14, macOptionClickForcesSelection: true },
   wettyVoid: 0,
   wettyFitTerminal: true,
+  wettyWebgl: true,
 };
 
 export function loadOptions(): Options {

@@ -7,5 +7,6 @@ export type XTerm = {
 export interface Options {
   xterm: XTerm;
   wettyFitTerminal: boolean;
+  wettyWebgl?: boolean;
   wettyVoid: number;
 }

@@ -58,6 +58,13 @@ window.inflateOptions([
     path: ['wettyFitTerminal'],
   },
   {
+    type: 'boolean',
+    name: 'WebGL Renderer',
+    description:
+      'Render with the GPU (fast). Turn off if characters occasionally render as garbage under heavy output - the text data is intact, but the WebGL glyph atlas can corrupt on some machines. Takes effect after a page reload.',
+    path: ['wettyWebgl'],
+  },
+  {
     type: 'number',
     name: 'Terminal Columns',
     description:

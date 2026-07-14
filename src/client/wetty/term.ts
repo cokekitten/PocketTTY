@@ -56,9 +56,16 @@ export class Term extends Terminal {
       }),
     );
     this.loadOptions = loadOptions;
-    if (!isMobile) {
+    if (!isMobile && loadOptions().wettyWebgl !== false) {
       try {
-        this.loadAddon(new WebglAddon());
+        const webgl = new WebglAddon();
+        webgl.onContextLoss(() => {
+          // The GPU context is gone (driver reset, memory pressure); keep
+          // rendering correct by falling back to the DOM renderer instead
+          // of leaving a corrupted glyph atlas on screen.
+          webgl.dispose();
+        });
+        this.loadAddon(webgl);
       } catch {
         // WebGL not available — DOM renderer will be used
       }
