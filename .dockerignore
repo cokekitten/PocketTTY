@@ -10,3 +10,5 @@ dist
 build
 docs
 Dockerfile
+*.tsbuildinfo
+ssl

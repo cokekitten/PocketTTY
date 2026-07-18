@@ -73,7 +73,39 @@ node build/main.js --host 0.0.0.0 --port 3918 --title PocketTTY \
 - 想免除 macOS Chrome 的剪贴板"下一次点击"兜底,用 `--ssl-key/--ssl-cert`
   上 HTTPS 让页面成为安全上下文。
 
-其余用法(Docker、更多参数、开发流程)见上游文档:[README.upstream.md](./README.upstream.md)。
+## 🐳 Docker
+
+仓库自带多阶段 Dockerfile(继承自上游,与本分支完全兼容):
+
+```sh
+docker build -f containers/wetty/Dockerfile -t pockettty .
+```
+
+容器里的 wetty 通过 SSH 连宿主机(或任何目标机)。免密自动登录 + 直达 herdr/tmux 的运行示例:
+
+```sh
+docker run -d --name pockettty --restart unless-stopped \
+  -p 3918:3000 \
+  -v ~/.ssh/id_rsa:/ssh-key:ro \
+  pockettty \
+  --host 0.0.0.0 --title PocketTTY \
+  --ssh-host host.docker.internal --ssh-user <user> \
+  --ssh-key /ssh-key --ssh-auth publickey \
+  --command '~/.local/bin/herdr'
+```
+
+要点:
+
+- 私钥用**只读挂载**(`-v ...:ro`)传入,不要打进镜像;
+- 容器内没有 `localhost` 的宿主机,连宿主用 `host.docker.internal`(Docker Desktop
+  / OrbStack 均支持;Linux 加 `--add-host=host.docker.internal:host-gateway`);
+- 目标机的 `authorized_keys`
+  需包含该密钥对应的公钥,且 sshd 允许来自容器网段的连接。
+
+更多容器编排(nginx / traefik 反代示例)见上游的 `docker-compose.yml` 与
+[README.upstream.md](./README.upstream.md)。
+
+其余用法(更多参数、开发流程)同见上游文档:[README.upstream.md](./README.upstream.md)。
 
 ## 📱 手机手势
 
